@@ -129,7 +129,6 @@ if __name__ == "__main__":
     # parser.add_argument('--test_subset', default=-1, type=int, help='use only a subset of the test set for evaluation and visualization')
     # parser.add_argument('--viz_results', action='store_true', help="save visualizations of results and gt for each video sequence")
 
-    ### target_finetuning settings
     parser.add_argument('--extract_save_pseudo_labels', default=0, type=int, choices=[0,1], help="extract and save pseudo_labels of type pseudo_label_type")
     parser.add_argument('--pseudo_label_type', default='CP', choices=['CMPL', 'merge', 'local', 'PL', 'CP'], type=str)
 
@@ -184,20 +183,17 @@ if __name__ == "__main__":
     # parser.add_argument('--num_stages', default=4, type=int)
     # parser.add_argument('--num_layers', default=10, type=int)
     # parser.add_argument('--num_f_maps', default=64, type=int)
-
     # parser.add_argument('--weights', default='opt', help="None, [1., 5.], 'opt'")
-
     # parser.add_argument('--uniform', default=0, type=int)
     # parser.add_argument('--regression', default=0, type=int)
     # parser.add_argument('--std', default=1, type=int)
     # parser.add_argument('--classification_threshold', default=0.5, type=float)
 
-    #### Other settings
+    ### Other settings
     # parser.add_argument('--feature_normalization', default=0, type=int)
     # parser.add_argument('--num_boundary_frames', default=2, type=int)
 
     args = parser.parse_args()
-    # if args.PL_info_savefolder is False:
     args.PL_info_savefolder = str(Path(args.load_label_path).stem)
     if args.pretrained == '':
         args.pretrained = False

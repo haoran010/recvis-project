@@ -59,15 +59,12 @@ class SinusoidalPositionalEmbedding(nn.Module):
         self.embedding_dim = embedding_dim
         self.padding_idx = padding_idx
         self.left_pad = left_pad
-        self.weights = dict()   # device --> actual weight; due to nn.DataParallel :-(
+        self.weights = dict()
         self.register_buffer('_float_tensor', torch.FloatTensor(1))
 
     @staticmethod
     def get_embedding(num_embeddings, embedding_dim, padding_idx=None):
-        """Build sinusoidal embeddings.
-        This matches the implementation in tensor2tensor, but differs slightly
-        from the description in Section 3.5 of "Attention Is All You Need".
-        """
+
         half_dim = embedding_dim // 2
         emb = math.log(10000) / (half_dim - 1)
         emb = torch.exp(torch.arange(half_dim, dtype=torch.float) * -emb)
@@ -86,7 +83,6 @@ class SinusoidalPositionalEmbedding(nn.Module):
         max_pos = self.padding_idx + 1 + seq_len
         device = input.get_device()
         if device not in self.weights or max_pos > self.weights[device].size(0):
-            # recompute/expand embeddings if needed
             self.weights[device] = SinusoidalPositionalEmbedding.get_embedding(
                 max_pos,
                 self.embedding_dim,
@@ -97,13 +93,11 @@ class SinusoidalPositionalEmbedding(nn.Module):
         return self.weights[device].index_select(0, positions.reshape(-1)).reshape(bsz, seq_len, -1).detach()
 
     def max_positions(self):
-        return int(1e4)  # an arbitrary large number
+        return int(1e4)
 
 
 class MultiheadAttention(nn.Module):
-    """
-    Multi-headed attention
-    """
+
 
     def __init__(self, embed_dim, num_heads, attn_dropout=0.,
                  bias=True, add_bias_kv=False, add_zero_attn=False):
@@ -143,13 +137,6 @@ class MultiheadAttention(nn.Module):
             nn.init.xavier_normal_(self.bias_v)
 
     def forward(self, query, key, value, attn_mask=None):
-        """Input shape: Time x Batch x Channel
-        Self-attention can be implemented by passing in the same arguments for
-        query, key and value. Timesteps can be masked by supplying a T x T mask in the
-        `attn_mask` argument. Padding elements can be excluded from
-        the key by passing a binary ByteTensor (`key_padding_mask`) with shape:
-        batch x src_len, where padding elements are indicated by 1s.
-        """
 
         tgt_len, bsz, embed_dim = query.size()
         assert embed_dim == self.embed_dim
@@ -189,8 +176,6 @@ class MultiheadAttention(nn.Module):
                 assert False
 
         attn_weights = F.softmax(attn_weights.float(), dim=-1).type_as(attn_weights)
-        # attn_weights = F.relu(attn_weights)
-        # attn_weights = attn_weights / torch.max(attn_weights)
         attn_weights = F.dropout(attn_weights, p=self.attn_dropout, training=self.training)
 
         attn = torch.bmm(attn_weights, v)
@@ -240,16 +225,7 @@ class TransformerEncoderLayer(nn.Module):
         self.layer_norms = nn.ModuleList([LayerNorm(self.embed_dim) for _ in range(2)])
 
     def forward(self, x):
-        """
-        Args:
-            x (Tensor): input to the layer of shape `(seq_len, batch, embed_dim)`
-            encoder_padding_mask (ByteTensor): binary ByteTensor of shape
-                `(batch, src_len)` where padding elements are indicated by ``1``.
-            x_k (Tensor): same as x
-            x_v (Tensor): same as x
-        Returns:
-            encoded output of shape `(batch, src_len, embed_dim)`
-        """
+
         residual = x
         x = self.maybe_layer_norm(0, x, before=True)
         mask = buffered_future_mask(x) if self.attn_mask else None
@@ -278,9 +254,6 @@ class TransformerEncoderLayer(nn.Module):
 
 
 class TransformerEncoder(nn.Module):
-    """
-    The Transformer encoder
-    """
 
     def __init__(self, embed_dim, num_heads, layers, attn_dropout=0.0, relu_dropout=0.0, res_dropout=0.0,
                  embed_dropout=0.0, attn_mask=False):
@@ -308,9 +281,6 @@ class TransformerEncoder(nn.Module):
             self.layer_norm = LayerNorm(embed_dim)
 
     def forward(self, x_in):
-
-        # x_in (FloatTensor): embedded input of shape `(src_len, batch, embed_dim)`
-
         # embed tokens and positions
         x = self.embed_scale * x_in
 
@@ -350,7 +320,6 @@ class TransModel(nn.Module):
         self.attn_mask = arg.attn_mask
 
         self.proj_in = nn.Conv1d(self.num_feature, self.d_v, kernel_size=1, padding=0, bias=False)
-        # self.proj_in2 = nn.Conv1d(256, self.d_v, kernel_size=1, padding=0, bias=False)
 
         self.transformer = TransformerEncoder(embed_dim=self.d_v,
                                               num_heads=self.num_heads,
@@ -361,53 +330,23 @@ class TransModel(nn.Module):
                                               embed_dropout=self.embed_dropout,
                                               attn_mask=self.attn_mask)
 
-        # self.transformer = TransformerEncoder(embed_dim=self.d_v, num_heads=64, layers=8)
         # Classification layers
         self.proj1 = nn.Linear(self.d_v, self.d_v)
         self.proj2 = nn.Linear(self.d_v, self.d_v)
         self.out_layer = nn.Linear(self.d_v, out_dim)
 
     def forward(self, x, mask):
-        # print(x.shape)
-
         x_v = F.dropout(x, p=self.embed_dropout, training=self.training)
-        # x_v = self.proj_in(x_v)
         x_v = self.proj_in(x_v).permute(2, 0, 1)
-        # x_in (FloatTensor): embedded input of shape `(src_len, batch, embed_dim)`
-        # print(x_v.shape)
-
-
         x_v = self.transformer(x_v)
-        # last_h = h_l[-1]  # Take the last output for prediction
 
         # A residual block
-        # last_x = self.proj2(F.dropout(F.relu(self.proj1(x_v))))
         last_x = self.proj2(F.dropout(F.gelu(self.proj1(x_v)), p=self.out_dropout, training=self.training))
         last_x += last_x
 
-        # output = F.relu(self.out_layer(last_x))
         output = self.out_layer(last_x)
 
         m = mask.permute(2, 0, 1)
         output = output * m[:, :, 0:1]
         return output
 
-
-
-# if __name__ == "__main__":
-#     # def __init__(self, image_size, patch_size, num_classes, num_frames, dim=192, depth=4, heads=3, pool='cls',
-#     #              in_channels=3, dim_head=64, dropout=0.,
-#     #              emb_dropout=0., scale_dim=4, ):
-#
-#     encoder = TransformerEncoder(300, 4, 2)
-#
-#     img = torch.ones([5, 1024, 9]).cuda()
-#     model = TransModel(1024,2).cuda()
-#     # model = ViViT(1024, 2, 9).cuda()
-#     parameters = filter(lambda p: p.requires_grad, model.parameters())
-#     parameters = sum([np.prod(p.size()) for p in parameters]) / 1_000_000
-#     print('Trainable Parameters: %.3fM' % parameters)
-#
-#     out = model(img)
-#
-#     print("Shape of out :", out.shape)  # [B, num_classes]
